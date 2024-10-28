@@ -7,6 +7,7 @@ import org.example.common.common.exception.InvalidRequestException;
 import org.example.common.crypto.entity.Crypto;
 import org.example.common.crypto.repository.CryptoRepository;
 import org.example.common.subscriptions.entity.Subscriptions;
+import org.example.common.subscriptions.repository.BillingRepository;
 import org.example.common.subscriptions.repository.SubscriptionsRepository;
 import org.example.common.trade.dto.request.TradeRequestDto;
 import org.example.common.trade.dto.response.TradeResponseDto;
@@ -17,6 +18,8 @@ import org.example.common.trade.repository.TradeRepository;
 import org.example.common.user.entity.User;
 import org.example.common.user.repository.UserRepository;
 import org.example.common.wallet.entity.Wallet;
+import org.example.common.wallet.entity.WalletHistory;
+import org.example.common.wallet.repository.WalletHistoryRepository;
 import org.example.common.wallet.repository.WalletRepository;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
@@ -33,6 +36,8 @@ public class TradeService {
     private final UserRepository userRepository;
     private final CryptoRepository cryptoRepository;
     private final WalletRepository walletRepository;
+    private final BillingRepository billingRepository;
+    private final WalletHistoryRepository walletHistoryRepository;
     private final SubscriptionsRepository subscriptionsRepository;
     private final RedisTemplate<String, Long> redisTemplate;
 
@@ -49,13 +54,17 @@ public class TradeService {
                 throw new InvalidRequestException("no such money");
             }
             wallet.update(wallet.getAmount() + tradeRequestDto.getAmount(),
-                    wallet.getCash() - (long)(price * tradeRequestDto.getAmount()));
+                    wallet.getCash() - (long)(price * tradeRequestDto.getAmount()),price);
+            WalletHistory walletHistory = new WalletHistory(wallet);
+            walletHistoryRepository.save(walletHistory);
         }else if(tradeRequestDto.getTradeType().equals(TradeType.Authority.SELL)){
             if(wallet.getAmount() < tradeRequestDto.getAmount()){
                 throw new InvalidRequestException("no such amount");
             }
             wallet.update((wallet.getAmount() - tradeRequestDto.getAmount()),
-                    wallet.getCash() + (long)(price * tradeRequestDto.getAmount()));
+                    wallet.getCash() + (long)(price * tradeRequestDto.getAmount()),price);
+            WalletHistory walletHistory = new WalletHistory(wallet);
+            walletHistoryRepository.save(walletHistory);
         }
         Trade trade = new Trade(user,crypto,tradeRequestDto.getTradeType(),tradeRequestDto.getTradeFor(),tradeRequestDto.getAmount(),price,(long)(price * tradeRequestDto.getAmount()),user.getId());
         tradeRepository.save(trade);
@@ -91,10 +100,18 @@ public class TradeService {
 
         if (tradeRequestDto.getAmount().equals(subscriptions.getCryptoAmount())) {
             Trade trade = new Trade(user,crypto, TradeType.Authority.SELL, TradeFor.Authority.OTHER, subscriptions.getCryptoAmount(),price,(long)(price * tradeRequestDto.getAmount()),subscriptions.getFollowerUser().getId());
-            userWallet.updateCash(totalPrice*0.1);
-            followerWallet.updateCash(totalPrice*0.9);
+            userWallet.updateCash(totalPrice*0.1,price);
+            followerWallet.updateCash(totalPrice*0.9,price);
             tradeRepository.save(trade);
+            subscriptions.checkout(price);
+            billingRepository.save(subscriptions);
             subscriptionsRepository.delete(subscriptions);
+
+            WalletHistory walletHistory = new WalletHistory(userWallet);
+            WalletHistory walletHistory1 = new WalletHistory(followerWallet);
+
+            walletHistoryRepository.save(walletHistory);
+            walletHistoryRepository.save(walletHistory1);
         }
         else {
             throw new InvalidRequestException("write same amount");
